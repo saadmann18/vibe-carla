@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.venv
+build/
+dist/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints
+
+# VS Code
+.vscode/
+
+# PyCharm
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project Specific
+# Ignore generic experiment results but keep the structure
+src/week1_kalman_fusion/results/*
+!src/week1_kalman_fusion/results/.gitkeep
+# (Optional: unignore the specific result used in the report if desired, 
+# but generally reports refer to local files or hosted images. 
+# Here we ignore all results to keep repo clean.)
+
+# LaTeX Artifacts (generated in docs/tex/)
+docs/tex/*.aux
+docs/tex/*.fdb_latexmk
+docs/tex/*.fls
+docs/tex/*.log
+docs/tex/*.out
+docs/tex/*.synctex.gz
+docs/tex/*.toc
+
+# We keep the final PDF report (LaTeX version)
+!docs/tex/report.pdf
+
+# Ignore obsolete/intermediate report files
+docs/week1_technical_report.html
+docs/week1_technical_report.md
+docs/week1_technical_report.pdf
+
+# Temporary/Planning files
+convert_pdf.py
+week1_plan.txt
