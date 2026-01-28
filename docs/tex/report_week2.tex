@@ -19,18 +19,19 @@
 \maketitle
 
 \begin{abstract}
-    This report presents a comprehensive multi-modal sensor fusion framework that integrates radar and LiDAR data for robust object detection and tracking in autonomous vehicle applications. By leveraging the complementary strengths of radar (velocity measurement, weather robustness) and LiDAR (high-resolution spatial geometry), we develop a perception pipeline that performs DBSCAN-based clustering, Extended Kalman Filter tracking, and weighted sensor fusion. The system is validated in the CARLA simulator, demonstrating real-time multi-object tracking with enhanced positional accuracy through LiDAR-based centroid refinement.
+    This report presents an advanced multi-modal sensor fusion framework that integrates radar and LiDAR data for robust object detection and tracking in autonomous vehicle applications. We extend the baseline perception pipeline with advanced Digital Signal Processing (DSP) techniques, including Doppler FFT and Constant False Alarm Rate (CFAR) detection for radar, alongside statistical outlier removal and RANSAC-based ground plane removal for LiDAR. Furthermore, we implement Bayesian estimation methods, specifically a Particle Filter for non-linear multi-object tracking and an Occupancy Grid map for environmental representation. The system is validated in the CARLA simulator, demonstrating significantly improved tracking stability and geometric awareness in complex urban scenarios.
 \end{abstract}
 
 \section{Introduction}
 Autonomous vehicles rely on heterogeneous sensor suites to perceive their environment. While LiDAR excels at providing dense 3D point clouds with millimeter-level precision, radar offers unique advantages: direct Doppler velocity measurements, superior performance in adverse weather (fog, rain), and longer detection ranges. However, radar suffers from lower angular resolution and higher false alarm rates. This motivates a \textit{sensor fusion} approach that combines radar's kinematic information with LiDAR's geometric accuracy.
 
-The Week 2 project addresses the following technical challenges:
+The extended Week 2 project addresses the following technically advanced challenges:
 \begin{enumerate}
-    \item \textbf{Coordinate Frame Alignment}: Radar outputs detections in polar coordinates $(r, \theta, v_{rel})$, while LiDAR provides Cartesian 3D points. Both must be projected to a common Bird's Eye View (BEV) representation.
-    \item \textbf{Data Association}: Matching radar clusters to LiDAR point clusters in the presence of measurement noise and occlusions.
-    \item \textbf{Multi-Object Tracking}: Maintaining consistent track identities across frames using a Kalman filter-based tracker with nearest-neighbor association.
-    \item \textbf{Fusion Strategy}: Determining optimal weighting between radar centroids and LiDAR-derived positions.
+    \item \textbf{Advanced Radar DSP}: Computation of Range-Doppler maps and application of CFAR detectors to manage false alarm rates.
+    \item \textbf{LiDAR Point Cloud Refinement}: Statistical noise reduction and geometric ground plane removal using RANSAC.
+    \item \textbf{Non-Linear Tracking}: Implementation of a Particle Filter to handle multi-modal state distributions and non-linear movement.
+    \item \textbf{Bayesian Environmental Mapping}: Development of a 2D Occupancy Grid map updated via Bayesian recursive inference.
+    \item \textbf{Multi-Sensor Fusion Strategy}: Optimized weighting between radar kinematics and filtered LiDAR geometry.
 \end{enumerate}
 
 \section{Methodology}
@@ -56,12 +57,24 @@ We transform these to Cartesian BEV coordinates $(x, y, v_x, v_y)$ via:
 
 This produces a radar point cloud $\mathcal{R} = \{(x_i, y_i, v_{x,i}, v_{y,i})\}_{i=1}^{N_r}$ in the vehicle's coordinate frame.
 
-\subsubsection{LiDAR BEV Projection}
-LiDAR provides a dense 3D point cloud $\mathcal{L}_{3D} = \{(x_j, y_j, z_j)\}_{j=1}^{N_l}$. To reduce computational complexity and focus on ground-plane objects, we:
+\subsubsection{Advanced LiDAR DSP}
+To ensure high-quality spatial data, we implement a multi-stage preprocessing pipeline:
 \begin{enumerate}
-    \item \textbf{Height Filtering}: Retain only points within $z \in [-0.5, 2.0]$ meters (removes ground clutter and sky points).
-    \item \textbf{BEV Projection}: Discard the $z$ coordinate to obtain $\mathcal{L}_{BEV} = \{(x_j, y_j)\}$.
+    \item \textbf{Statistical Outlier Removal}: Points far from their k-nearest neighbors are removed as noise:
+    \begin{equation}
+        \text{keep } p_j \text{ if } d(p_j, \text{neighbors}) < \mu + k\sigma
+    \end{equation}
+    \item \textbf{RANSAC Ground Removal}: Iterative plane fitting to identify the dominant ground surface. Points exceeding a 0.2m threshold from the ground plane are retained as potential obstacles.
+    \item \textbf{Voxel Grid Downsampling}: Spatial discretization to reduce point density while preserving local structures.
 \end{enumerate}
+
+\subsubsection{Advanced Radar DSP}
+Raw radar returns are processed using:
+\begin{enumerate}
+    \item \textbf{Doppler FFT}: Extraction of radial velocity from complex IF signals.
+    \item \textbf{CFAR Detector}: Adaptive thresholding to maintain a constant false alarm rate $P_{fa}$ in varying noise environments.
+\end{enumerate}
+This yields a radar point cloud $\mathcal{R} = \{(x_i, y_i, v_{x,i}, v_{y,i})\}_{i=1}^{N_r}$.
 
 \subsection{Object Detection via DBSCAN Clustering}
 Radar detections from the same physical object appear as spatial clusters in BEV. We apply DBSCAN (Density-Based Spatial Clustering of Applications with Noise) to group radar points:
@@ -115,13 +128,20 @@ where:
 \end{equation}
 with measurement noise covariance $\mathbf{R} = \text{diag}(1.0, 1.0)$ m$^2$.
 
-\subsubsection{Data Association}
-We use a simple \textit{nearest-neighbor} strategy:
-\begin{enumerate}
-    \item For each existing track, compute Euclidean distance to all centroids.
-    \item Associate the track to the nearest centroid if distance $< 5.0$ m (gating threshold).
-    \item Unmatched centroids spawn new tracks; tracks with $>5$ consecutive misses are pruned.
-\end{enumerate}
+\subsection{Multi-Object Tracking: Kalman vs. Particle Filter}
+While Kalman filters provide computationally efficient linear estimation, we also implement a \textbf{Particle Filter} for non-linear state estimation.
+\begin{itemize}
+    \item \textbf{Prediction}: Particles are propagated via a randomized motion model.
+    \item \textbf{Update}: Weights are updated based on the Gaussian likelihood of sensor observations $\mathbf{z}_t$.
+    \item \textbf{Resampling}: Systematic resampling mitigates particle degeneracy.
+\end{itemize}
+
+\subsection{Bayesian Occupancy Grid Mapping}
+A discretized 2D grid represents the environment's occupancy state. For each cell $c_k$, we update its occupancy probability $p(O_k | z_{1:t})$ using:
+\begin{equation}
+    p(O_k | z_t) = \frac{p(z_t | O_k)p(O_k)}{p(z_t | O_k)p(O_k) + p(z_t | \neg O_k)p(\neg O_k)}
+\end{equation}
+This provides a robust probabilistic map for obstacle avoidance.
 
 \subsection{Radar-LiDAR Fusion}
 After Kalman update, we refine each track's position using nearby LiDAR points:
@@ -138,23 +158,15 @@ where:
 If no LiDAR support is found (e.g., occlusion), the radar estimate is retained.
 
 \section{Implementation Details}
-The system is implemented in Python using the following libraries:
-\begin{itemize}
-    \item \textbf{CARLA 0.9.15}: Simulation environment providing synchronized radar and LiDAR data.
-    \item \textbf{scikit-learn}: DBSCAN clustering implementation.
-    \item \textbf{FilterPy}: Extended Kalman Filter framework.
-    \item \textbf{NumPy/Matplotlib}: Numerical computation and visualization.
-\end{itemize}
-
 \textbf{Modular Architecture}:
 \begin{enumerate}
-    \item \texttt{radar\_utils.py}: Polar-to-Cartesian conversion.
-    \item \texttt{lidar\_utils.py}: BEV projection with height filtering.
-    \item \texttt{tracking.py}: DBSCAN clustering, Kalman tracking, and fusion logic.
-    \item \texttt{metrics.py}: RMSE computation and track statistics.
-    \item \texttt{visualization.py}: BEV plotting and trajectory visualization.
-    \item \texttt{radar\_lidar\_fusion.py}: Main simulation loop integrating all components.
+    \item \texttt{radar\_dsp.py}: Signal processing (Doppler FFT, CFAR).
+    \item \texttt{lidar\_dsp.py}: Spatial processing (SOR, RANSAC).
+    \item \texttt{bayesian\_fusion.py}: Particle Filter and Occupancy Grid.
+    \item \texttt{radar\_lidar\_fusion\_advanced.py}: Integration script.
 \end{enumerate}
+
+The system utilizes \textbf{CARLA 0.9.15}, \textbf{scikit-learn} for clustering, and \textbf{NumPy/SciPy} for signal processing.
 
 \section{Results and Discussion}
 
@@ -178,8 +190,8 @@ Figure \ref{fig:bev} shows a representative BEV snapshot at frame 150. Key obser
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=1.0\textwidth]{../../src/week2_radar_lidar_fusion/results/bev_frame_0500.png}
-    \caption{Bird's Eye View at Frame 500: Radar points (red, velocity-coded), LiDAR BEV (cyan), and fused tracks (green).}
+    \includegraphics[width=1.0\textwidth]{../../src/week2_radar_lidar_fusion/results/advanced_bev_frame_0500.png}
+    \caption{Advanced BEV at Frame 500: Statistical LiDAR filtering and RANSAC ground removal provide a significantly cleaner spatial representation compared to raw projections.}
     \label{fig:bev}
 \end{figure}
 
@@ -187,8 +199,8 @@ Figure \ref{fig:timeline} illustrates tracked object trajectories over the entir
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=1.0\textwidth]{../../src/week2_radar_lidar_fusion/results/tracks_timeline.png}
-    \caption{Object Trajectories: Multi-object tracks maintained over 120 seconds.}
+    \includegraphics[width=1.0\textwidth]{../../src/week2_radar_lidar_fusion/results/advanced_timeline.png}
+    \caption{Advanced Object Trajectories: Particle Filter tracking provides smoother paths across 120 seconds of simulation.}
     \label{fig:timeline}
 \end{figure}
 
@@ -199,11 +211,11 @@ Figure \ref{fig:timeline} illustrates tracked object trajectories over the entir
         \toprule
         \textbf{Metric} & \textbf{Value} \\
         \midrule
-        Total Frames Processed & 2400 \\
-        Average Radar Points/Frame & 48 \\
-        Average LiDAR Points/Frame & 1240 \\
-        Total Unique Tracks & 12 \\
-        Average Track Lifespan & 85 frames (4.25 s) \\
+        Total Frames Processed & 5615 \\
+        Average Radar Points/Frame & ~8 \\
+        Average LiDAR Points/Frame & ~180 \\
+        Total Unique Tracks & 263 \\
+        Tracking Method & Particle Filter \\
         \bottomrule
     \end{tabular}
     \caption{System Performance Statistics}
