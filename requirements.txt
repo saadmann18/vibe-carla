@@ -3,3 +3,5 @@ filterpy
 numpy
 matplotlib
 scipy
+pytest
+scikit-learn

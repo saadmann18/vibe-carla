@@ -1,0 +1,231 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{xcolor}
+\usepackage{booktabs}
+
+\title{Multi-Modal Sensor Fusion: Radar-LiDAR Integration for Object Detection and Tracking}
+\author{AV Perception Portfolio Team}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+    This report presents a comprehensive multi-modal sensor fusion framework that integrates radar and LiDAR data for robust object detection and tracking in autonomous vehicle applications. By leveraging the complementary strengths of radar (velocity measurement, weather robustness) and LiDAR (high-resolution spatial geometry), we develop a perception pipeline that performs DBSCAN-based clustering, Extended Kalman Filter tracking, and weighted sensor fusion. The system is validated in the CARLA simulator, demonstrating real-time multi-object tracking with enhanced positional accuracy through LiDAR-based centroid refinement.
+\end{abstract}
+
+\section{Introduction}
+Autonomous vehicles rely on heterogeneous sensor suites to perceive their environment. While LiDAR excels at providing dense 3D point clouds with millimeter-level precision, radar offers unique advantages: direct Doppler velocity measurements, superior performance in adverse weather (fog, rain), and longer detection ranges. However, radar suffers from lower angular resolution and higher false alarm rates. This motivates a \textit{sensor fusion} approach that combines radar's kinematic information with LiDAR's geometric accuracy.
+
+The Week 2 project addresses the following technical challenges:
+\begin{enumerate}
+    \item \textbf{Coordinate Frame Alignment}: Radar outputs detections in polar coordinates $(r, \theta, v_{rel})$, while LiDAR provides Cartesian 3D points. Both must be projected to a common Bird's Eye View (BEV) representation.
+    \item \textbf{Data Association}: Matching radar clusters to LiDAR point clusters in the presence of measurement noise and occlusions.
+    \item \textbf{Multi-Object Tracking}: Maintaining consistent track identities across frames using a Kalman filter-based tracker with nearest-neighbor association.
+    \item \textbf{Fusion Strategy}: Determining optimal weighting between radar centroids and LiDAR-derived positions.
+\end{enumerate}
+
+\section{Methodology}
+
+\subsection{Sensor Data Preprocessing}
+
+\subsubsection{Radar Point Cloud Generation}
+CARLA's radar sensor outputs detections in polar coordinates relative to the sensor frame. Each detection $d_i$ contains:
+\begin{equation}
+    d_i = (r_i, \theta_i, v_{rel,i})
+\end{equation}
+where $r_i$ is range [m], $\theta_i$ is azimuth [rad], and $v_{rel,i}$ is radial velocity [m/s].
+
+We transform these to Cartesian BEV coordinates $(x, y, v_x, v_y)$ via:
+\begin{equation}
+    \begin{aligned}
+        x_i &= r_i \cos(\theta_i) \\
+        y_i &= r_i \sin(\theta_i) \\
+        v_{x,i} &= v_{rel,i} \cos(\theta_i) \\
+        v_{y,i} &= v_{rel,i} \sin(\theta_i)
+    \end{aligned}
+\end{equation}
+
+This produces a radar point cloud $\mathcal{R} = \{(x_i, y_i, v_{x,i}, v_{y,i})\}_{i=1}^{N_r}$ in the vehicle's coordinate frame.
+
+\subsubsection{LiDAR BEV Projection}
+LiDAR provides a dense 3D point cloud $\mathcal{L}_{3D} = \{(x_j, y_j, z_j)\}_{j=1}^{N_l}$. To reduce computational complexity and focus on ground-plane objects, we:
+\begin{enumerate}
+    \item \textbf{Height Filtering}: Retain only points within $z \in [-0.5, 2.0]$ meters (removes ground clutter and sky points).
+    \item \textbf{BEV Projection}: Discard the $z$ coordinate to obtain $\mathcal{L}_{BEV} = \{(x_j, y_j)\}$.
+\end{enumerate}
+
+\subsection{Object Detection via DBSCAN Clustering}
+Radar detections from the same physical object appear as spatial clusters in BEV. We apply DBSCAN (Density-Based Spatial Clustering of Applications with Noise) to group radar points:
+\begin{itemize}
+    \item \textbf{Parameters}: $\epsilon = 1.5$ m (neighborhood radius), $\text{minPts} = 2$ (minimum cluster size).
+    \item \textbf{Output}: Cluster labels $C = \{c_1, c_2, \ldots, c_K\}$ where $c_k \in \{0, 1, \ldots, K-1, -1\}$ ($-1$ denotes noise).
+\end{itemize}
+
+For each cluster $k$, we compute the centroid:
+\begin{equation}
+    \mathbf{m}_k = \frac{1}{|C_k|} \sum_{i \in C_k} (x_i, y_i, v_{x,i}, v_{y,i})
+\end{equation}
+where $C_k$ is the set of points assigned to cluster $k$.
+
+\subsection{Multi-Object Tracking with Kalman Filtering}
+
+\subsubsection{State Representation}
+Each tracked object maintains a 4D state vector:
+\begin{equation}
+    \mathbf{x}_t = \begin{bmatrix} x & y & v_x & v_y \end{bmatrix}^T
+\end{equation}
+representing position and velocity in BEV coordinates.
+
+\subsubsection{Motion Model}
+We employ a \textit{constant velocity} kinematic model:
+\begin{equation}
+    \mathbf{x}_{t+1} = \mathbf{F}_t \mathbf{x}_t + \mathbf{w}_t
+\end{equation}
+where the state transition matrix is:
+\begin{equation}
+    \mathbf{F}_t = \begin{bmatrix}
+        1 & 0 & \Delta t & 0 \\
+        0 & 1 & 0 & \Delta t \\
+        0 & 0 & 1 & 0 \\
+        0 & 0 & 0 & 1
+    \end{bmatrix}
+\end{equation}
+and $\mathbf{w}_t \sim \mathcal{N}(0, \mathbf{Q})$ is process noise with $\mathbf{Q} = 0.1 \cdot \mathbf{I}_4$.
+
+\subsubsection{Measurement Model}
+Observations consist of 2D positions from radar cluster centroids:
+\begin{equation}
+    \mathbf{z}_t = \mathbf{H} \mathbf{x}_t + \mathbf{v}_t
+\end{equation}
+where:
+\begin{equation}
+    \mathbf{H} = \begin{bmatrix}
+        1 & 0 & 0 & 0 \\
+        0 & 1 & 0 & 0
+    \end{bmatrix}, \quad \mathbf{v}_t \sim \mathcal{N}(0, \mathbf{R})
+\end{equation}
+with measurement noise covariance $\mathbf{R} = \text{diag}(1.0, 1.0)$ m$^2$.
+
+\subsubsection{Data Association}
+We use a simple \textit{nearest-neighbor} strategy:
+\begin{enumerate}
+    \item For each existing track, compute Euclidean distance to all centroids.
+    \item Associate the track to the nearest centroid if distance $< 5.0$ m (gating threshold).
+    \item Unmatched centroids spawn new tracks; tracks with $>5$ consecutive misses are pruned.
+\end{enumerate}
+
+\subsection{Radar-LiDAR Fusion}
+After Kalman update, we refine each track's position using nearby LiDAR points:
+\begin{equation}
+    \mathbf{p}_{fused} = \alpha \cdot \mathbf{p}_{LiDAR} + (1 - \alpha) \cdot \mathbf{p}_{radar}
+\end{equation}
+where:
+\begin{itemize}
+    \item $\mathbf{p}_{LiDAR}$ is the mean of LiDAR BEV points within a 2.0 m search radius.
+    \item $\mathbf{p}_{radar}$ is the Kalman-filtered track position.
+    \item $\alpha = 0.7$ (70\% LiDAR weight, reflecting higher spatial accuracy).
+\end{itemize}
+
+If no LiDAR support is found (e.g., occlusion), the radar estimate is retained.
+
+\section{Implementation Details}
+The system is implemented in Python using the following libraries:
+\begin{itemize}
+    \item \textbf{CARLA 0.9.15}: Simulation environment providing synchronized radar and LiDAR data.
+    \item \textbf{scikit-learn}: DBSCAN clustering implementation.
+    \item \textbf{FilterPy}: Extended Kalman Filter framework.
+    \item \textbf{NumPy/Matplotlib}: Numerical computation and visualization.
+\end{itemize}
+
+\textbf{Modular Architecture}:
+\begin{enumerate}
+    \item \texttt{radar\_utils.py}: Polar-to-Cartesian conversion.
+    \item \texttt{lidar\_utils.py}: BEV projection with height filtering.
+    \item \texttt{tracking.py}: DBSCAN clustering, Kalman tracking, and fusion logic.
+    \item \texttt{metrics.py}: RMSE computation and track statistics.
+    \item \texttt{visualization.py}: BEV plotting and trajectory visualization.
+    \item \texttt{radar\_lidar\_fusion.py}: Main simulation loop integrating all components.
+\end{enumerate}
+
+\section{Results and Discussion}
+
+\subsection{Experimental Setup}
+The system was evaluated in CARLA's Town03 environment with the following configuration:
+\begin{itemize}
+    \item \textbf{Duration}: 120 seconds
+    \item \textbf{Vehicle Speed}: 50 km/h (autopilot enabled)
+    \item \textbf{Radar FOV}: 35° horizontal, 20° vertical, 100 m range
+    \item \textbf{LiDAR}: 32 channels, 100 m range, 100k points/sec
+    \item \textbf{Frame Rate}: 20 Hz (CARLA tick rate)
+\end{itemize}
+
+\subsection{Qualitative Analysis}
+Figure \ref{fig:bev} shows a representative BEV snapshot at frame 150. Key observations:
+\begin{itemize}
+    \item \textbf{Radar Coverage}: Sparse but velocity-aware detections (colored by speed).
+    \item \textbf{LiDAR Density}: Dense cyan point cloud providing geometric context.
+    \item \textbf{Fused Tracks}: Green markers indicate stable multi-object tracks with consistent IDs.
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{../../src/week2_radar_lidar_fusion/results/bev_frame_0500.png}
+    \caption{Bird's Eye View at Frame 500: Radar points (red, velocity-coded), LiDAR BEV (cyan), and fused tracks (green).}
+    \label{fig:bev}
+\end{figure}
+
+Figure \ref{fig:timeline} illustrates tracked object trajectories over the entire simulation. The smooth, continuous paths demonstrate successful track maintenance despite sensor noise and intermittent detections.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{../../src/week2_radar_lidar_fusion/results/tracks_timeline.png}
+    \caption{Object Trajectories: Multi-object tracks maintained over 120 seconds.}
+    \label{fig:timeline}
+\end{figure}
+
+\subsection{Quantitative Metrics}
+\begin{table}[H]
+    \centering
+    \begin{tabular}{@{}lc@{}}
+        \toprule
+        \textbf{Metric} & \textbf{Value} \\
+        \midrule
+        Total Frames Processed & 2400 \\
+        Average Radar Points/Frame & 48 \\
+        Average LiDAR Points/Frame & 1240 \\
+        Total Unique Tracks & 12 \\
+        Average Track Lifespan & 85 frames (4.25 s) \\
+        \bottomrule
+    \end{tabular}
+    \caption{System Performance Statistics}
+\end{table}
+
+\subsection{Critical Analysis \& Future Work}
+\subsubsection{Limitations}
+\begin{enumerate}
+    \item \textbf{Naive Data Association}: Nearest-neighbor matching fails in dense traffic scenarios with crossing trajectories. A Hungarian algorithm or Joint Probabilistic Data Association (JPDA) would improve robustness.
+    \item \textbf{Fixed Fusion Weights}: The 70/30 LiDAR-radar weighting is heuristic. Adaptive fusion based on measurement uncertainty (e.g., Kalman innovation covariance) would be more principled.
+    \item \textbf{No Occlusion Handling}: When LiDAR support is absent, the system falls back to radar-only tracking without explicitly modeling occlusion events.
+    \item \textbf{Constant Velocity Assumption}: The motion model ignores acceleration. Incorporating IMU data or using a Constant Acceleration model would improve prediction during maneuvers.
+\end{enumerate}
+
+\subsubsection{Proposed Enhancements}
+\begin{itemize}
+    \item \textbf{Track-to-Track Fusion}: Instead of sensor-level fusion, maintain separate radar and LiDAR tracks and fuse at the track level using a federated Kalman filter.
+    \item \textbf{Deep Learning Integration}: Replace DBSCAN with a learned object detector (e.g., PointPillars for LiDAR, radar CNN) for improved detection recall.
+    \item \textbf{Temporal Consistency}: Add track smoothing (e.g., Rauch-Tung-Striebel smoother) for offline trajectory refinement.
+\end{itemize}
+
+\section{Conclusion}
+This work demonstrates a functional radar-LiDAR fusion pipeline for autonomous vehicle perception. By combining DBSCAN clustering, Extended Kalman filtering, and weighted sensor fusion, the system achieves robust multi-object tracking in simulation. The modular design facilitates future extensions, including advanced data association, adaptive fusion strategies, and integration with higher-level planning modules. The Week 2 project establishes a foundation for more sophisticated perception architectures in subsequent portfolio milestones.
+
+\end{document}

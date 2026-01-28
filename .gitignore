@@ -29,9 +29,11 @@ Thumbs.db
 # Ignore generic experiment results but keep the structure
 src/week1_kalman_fusion/results/*
 !src/week1_kalman_fusion/results/.gitkeep
-# (Optional: unignore the specific result used in the report if desired, 
-# but generally reports refer to local files or hosted images. 
-# Here we ignore all results to keep repo clean.)
+src/week2_radar_lidar_fusion/results/*
+!src/week2_radar_lidar_fusion/results/.gitkeep
+# Unignore images used in documentation
+!src/week2_radar_lidar_fusion/results/bev_frame_0500.png
+!src/week2_radar_lidar_fusion/results/tracks_timeline.png
 
 # LaTeX Artifacts (generated in docs/tex/)
 docs/tex/*.aux
@@ -42,8 +44,9 @@ docs/tex/*.out
 docs/tex/*.synctex.gz
 docs/tex/*.toc
 
-# We keep the final PDF report (LaTeX version)
+# We keep the final PDF reports (LaTeX version)
 !docs/tex/report.pdf
+!docs/tex/report_week2.pdf
 
 # Ignore obsolete/intermediate report files
 docs/week1_technical_report.html
@@ -53,3 +56,4 @@ docs/week1_technical_report.pdf
 # Temporary/Planning files
 convert_pdf.py
 week1_plan.txt
+week2_project_plan.md
