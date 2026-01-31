@@ -60,19 +60,41 @@ This produces a radar point cloud $\mathcal{R} = \{(x_i, y_i, v_{x,i}, v_{y,i})\
 \subsubsection{Advanced LiDAR DSP}
 To ensure high-quality spatial data, we implement a multi-stage preprocessing pipeline:
 \begin{enumerate}
-    \item \textbf{Statistical Outlier Removal}: Points far from their k-nearest neighbors are removed as noise:
+    \item \textbf{Statistical Outlier Removal (SOR)}: Filters sensor noise by analyzing the local neighborhood of each point. For each point $p_j$, we compute the mean distance $\bar{d}_j$ to its $k=20$ nearest neighbors. Points are retained if they satisfy:
     \begin{equation}
-        \text{keep } p_j \text{ if } d(p_j, \text{neighbors}) < \mu + k\sigma
+        \bar{d}_j \leq \mu + \alpha\sigma
     \end{equation}
-    \item \textbf{RANSAC Ground Removal}: Iterative plane fitting to identify the dominant ground surface. Points exceeding a 0.2m threshold from the ground plane are retained as potential obstacles.
-    \item \textbf{Voxel Grid Downsampling}: Spatial discretization to reduce point density while preserving local structures.
+    where $\mu$ and $\sigma$ are the global mean and standard deviation of neighbor distances, and $\alpha=2.0$ is the multiplier.
+    
+    \item \textbf{Voxel Grid Downsampling}: Reduces computational load by discretizing the 3D space into voxels of size $0.2m$. All points within a voxel are replaced by their centroid:
+    \begin{equation}
+        P_{voxel} = \frac{1}{N_{points}} \sum_{i=1}^{N_{points}} p_i
+    \end{equation}
+    
+    \item \textbf{RANSAC Ground Removal}: Iteratively fits a plane model $ax + by + cz + d = 0$ to the point cloud. Points within a threshold of $0.3m$ are classified as ground (inliers) and removed, isolating above-ground obstacles.
 \end{enumerate}
 
 \subsubsection{Advanced Radar DSP}
-Raw radar returns are processed using:
+Raw radar returns are processed to isolate targets from background clutter:
 \begin{enumerate}
-    \item \textbf{Doppler FFT}: Extraction of radial velocity from complex IF signals.
-    \item \textbf{CFAR Detector}: Adaptive thresholding to maintain a constant false alarm rate $P_{fa}$ in varying noise environments.
+    \item \textbf{Hamming Windowing}: Applied to time-domain samples to reduce spectral leakage from sidelobes:
+    \begin{equation}
+        w(n) = 0.54 - 0.46 \cos\left(\frac{2\pi n}{N-1}\right)
+    \end{equation}
+    
+    \item \textbf{Doppler FFT}: Extraction of radial velocity $v_{rel}$ from complex Intermediate Frequency (IF) signals using Fast Fourier Transform.
+    
+    \item \textbf{Adaptive LMS Filter}: A Least Mean Squares filter for clutter rejection. It estimates and cancels background noise using the update rule:
+    \begin{equation}
+        \mathbf{w}_{n+1} = \mathbf{w}_n + \mu e_n \mathbf{x}_n
+    \end{equation}
+    where $e_n$ is the estimation error and $\mu$ is the learning rate.
+    
+    \item \textbf{Cell-Averaging CFAR Detector}: Maintains a constant false alarm rate $P_{fa}$ by adapting the detection threshold $T$ to the local noise power $P_{noise}$:
+    \begin{equation}
+        T = \gamma \cdot P_{noise}, \quad \gamma = N_{train} \ln(1/P_{fa})
+    \end{equation}
+    where $N_{train}$ training cells surround the test cell, separated by guard cells.
 \end{enumerate}
 This yields a radar point cloud $\mathcal{R} = \{(x_i, y_i, v_{x,i}, v_{y,i})\}_{i=1}^{N_r}$.
 
@@ -131,39 +153,40 @@ with measurement noise covariance $\mathbf{R} = \text{diag}(1.0, 1.0)$ m$^2$.
 \subsection{Multi-Object Tracking: Kalman vs. Particle Filter}
 While Kalman filters provide computationally efficient linear estimation, we also implement a \textbf{Particle Filter} for non-linear state estimation.
 \begin{itemize}
-    \item \textbf{Prediction}: Particles are propagated via a randomized motion model.
-    \item \textbf{Update}: Weights are updated based on the Gaussian likelihood of sensor observations $\mathbf{z}_t$.
-    \item \textbf{Resampling}: Systematic resampling mitigates particle degeneracy.
+    \item \textbf{Prediction (Proposal)}: Each particle $j$ is propagated forward using the motion model with added process noise:
+    \begin{equation}
+        \mathbf{x}_{t+1}^{(j)} = f(\mathbf{x}_t^{(j)}) + \mathbf{w}_t, \quad \mathbf{w}_t \sim \mathcal{N}(0, \mathbf{Q})
+    \end{equation}
+    
+    \item \textbf{Update (Weighting)}: Weights are updated based on the Gaussian likelihood of observing the measurement $\mathbf{z}_t$:
+    \begin{equation}
+        w_t^{(j)} \propto w_{t-1}^{(j)} \cdot \exp\left( -\frac{1}{2} (\mathbf{z}_t - h(\mathbf{x}_t^{(j)}))^T \mathbf{R}^{-1} (\mathbf{z}_t - h(\mathbf{x}_t^{(j)})) \right)
+    \end{equation}
+    
+    \item \textbf{Resampling}: Systematic resampling is triggered when the effective number of particles $N_{eff}$ falls below a threshold, mitigating particle degeneracy.
 \end{itemize}
 
 \subsection{Bayesian Occupancy Grid Mapping}
-A discretized 2D grid represents the environment's occupancy state. For each cell $c_k$, we update its occupancy probability $p(O_k | z_{1:t})$ using:
+A discretized 2D grid represents the environment's occupancy state. For each cell $O_k$, we update its occupancy probability $p(O_k | z_{1:t})$ via the recursive Bayesian update:
 \begin{equation}
     p(O_k | z_t) = \frac{p(z_t | O_k)p(O_k)}{p(z_t | O_k)p(O_k) + p(z_t | \neg O_k)p(\neg O_k)}
 \end{equation}
-This provides a robust probabilistic map for obstacle avoidance.
+By assuming a binary occupancy model (occupied/free), the grid maintains a spatial belief that is robust to transient sensor noise and occlusions.
 
-\subsection{Radar-LiDAR Fusion}
-After Kalman update, we refine each track's position using nearby LiDAR points:
+\subsection{Radar-LiDAR Fusion and Bayesian Weighted Average}
+After the state update, we refine each track's position using a Bayesian Weighted Average of radar and LiDAR centroids:
 \begin{equation}
-    \mathbf{p}_{fused} = \alpha \cdot \mathbf{p}_{LiDAR} + (1 - \alpha) \cdot \mathbf{p}_{radar}
+    \mathbf{p}_{fused} = \frac{\omega_{radar} \mathbf{p}_{radar} + \omega_{lidar} \mathbf{p}_{lidar}}{\omega_{radar} + \omega_{lidar}}
 \end{equation}
-where:
-\begin{itemize}
-    \item $\mathbf{p}_{LiDAR}$ is the mean of LiDAR BEV points within a 2.0 m search radius.
-    \item $\mathbf{p}_{radar}$ is the Kalman-filtered track position.
-    \item $\alpha = 0.7$ (70\% LiDAR weight, reflecting higher spatial accuracy).
-\end{itemize}
-
-If no LiDAR support is found (e.g., occlusion), the radar estimate is retained.
+where $\omega_i$ represents the confidence (inverse variance) of each sensor. In practice, $\omega_{lidar}=0.7$ and $\omega_{radar}=0.3$ provide a stable fusion that leverages LiDAR's spatial precision and radar's velocity consistency.
 
 \section{Implementation Details}
 \textbf{Modular Architecture}:
 \begin{enumerate}
-    \item \texttt{radar\_dsp.py}: Signal processing (Doppler FFT, CFAR).
-    \item \texttt{lidar\_dsp.py}: Spatial processing (SOR, RANSAC).
-    \item \texttt{bayesian\_fusion.py}: Particle Filter and Occupancy Grid.
-    \item \texttt{radar\_lidar\_fusion\_advanced.py}: Integration script.
+    \item \texttt{radar\_dsp.py}: Signal processing (Doppler FFT, CA-CFAR, Adaptive LMS, Hamming Window).
+    \item \texttt{lidar\_dsp.py}: Spatial processing (SOR Filter, RANSAC Ground Removal, Voxel Downsampling).
+    \item \texttt{bayesian\_fusion.py}: Particle Filter tracking, Bayesian Occupancy Grid, and Weighted Centroid Fusion.
+    \item \texttt{radar\_lidar\_fusion\_advanced.py}: Advanced integrated perception pipeline.
 \end{enumerate}
 
 The system utilizes \textbf{CARLA 0.9.15}, \textbf{scikit-learn} for clustering, and \textbf{NumPy/SciPy} for signal processing.
