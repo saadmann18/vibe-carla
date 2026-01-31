@@ -35,6 +35,9 @@ src/week2_radar_lidar_fusion/results/*
 !src/week2_radar_lidar_fusion/results/bev_frame_0500.png
 !src/week2_radar_lidar_fusion/results/tracks_timeline.png
 
+src/week4_multimodal_fusion/results/*
+!src/week4_multimodal_fusion/results/.gitkeep
+
 # LaTeX Artifacts (generated in docs/tex/)
 docs/tex/*.aux
 docs/tex/*.fdb_latexmk
@@ -59,3 +62,4 @@ week1_plan.txt
 week2_project_plan.md
 week2_extended_dsp_bayesian.md
 week_3_project_plan.txt
+src/week4_multimodal_fusion/week4_multimodal_fusion_plan.txt
